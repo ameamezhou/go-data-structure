@@ -177,6 +177,46 @@ fmt.Println(*pr)
 ```
 # array
     数组: int 型的 slice 底层就是 int 型的数组, 但是 slice 的 data 并不一定指向 array 的开头
-    
+
+```go
+// array
+// 比如:
+var inta = [5]int{1, 2, 3, 4, 5}
+ints := inta[2:3]
+// 当 array 已经存在了, 并且基于已经存在的 array 创建slice 就不会指向 array 的起始地址
+// 同理 还可以把其他的 slice 关联到同一个数组
+ints1 := inta[1:4]
+ints2 := inta[0:3]
+ints[0] = 100
+fmt.Println(inta, ints, ints1, ints2)
+// [1 2 100 4 5] [100] [2 100 4] [1 2 100]
+// 这也是为什么修改一个slice有时候会同时改变其他的slice的原因
+// 因为slice本身并没有保存数据, 只是保存了 开头(data) 和 结尾(len)
+```
+
+数组越界
+```go
+var inta = [5]int{1, 2, 3, 4, 5}
+ints := inta[0:]
+fmt.Println(cap(ints))
+// 这个时候 使用 cap(ints)查看  会发现 cap==5, 此时如果要append一个元素会怎么样
+ints = append(ints, 6)
+fmt.Println(cap(ints))
+// 这里我们会发现cap变成了10
+// 先不去考虑cap的问题, 我们知道array在内存中是一个连续的一段,并且不能扩大;
+// 那么当slice需要表示的len超过了array就会重新给slice创建一个新的array, 再将元数据拷贝过去
+// 至此就能理解为什么会出现cap变成10的原因了;
+// 因为slice是可以扩大的, 如果没append一次就要重新创建数组再copy回来, 那么对于性能的损耗就会比较大
+// 所以 Go 对slice的扩容做了优化
+```
+
+newcap 大小的数组需要分配多大的内存?
+> newcap * 元素类型大小 == 分配的内存大小?
+> 
+> 再Go中 申请内存并不会直接和操作系统直接交互, 而是由Go一次性申请一大块内存, 再由Go按照需要分配
+> 
+> 这里涉及到了Go的malloc 这个环节比较多, 以后继续学习
+> 
+> 简单来说就是会匹配到足够大切接近的规格(8\16\32...) -- 类似于操作系统里的一种分块方法, 定义一些规格然后去匹配最接近的规格
 # 内存对齐
 # map
