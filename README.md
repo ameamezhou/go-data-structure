@@ -282,4 +282,137 @@ func main(){
     哈希表用m个桶来存储K-V键值对, 当K-V对加入hashmap时, 会对key经过hash函数得到hash值, 然后需要获取到对应key的value时, 只需要重复
     上述过程就能找到对应桶, 就能找到k-v对
 
+![img.png](hashmap_like.png)
+
     找到对应桶的方法一般有两种
+    1 取模法   用哈希值对m取模. 得到 0-m-1 的值, 就能找到桶
+
+    2 与运算法 用哈希值 & 上 m-1, 但是前提的要求是m为2的幂(2的幂只有一个1, m-1 全是1), 与运算后也可以获得0-m-1
+    现在基本用这个(这个前提要求就是你桶的数量必须要是2的幂  才能用与运算)
+![img.png](hashmap_yuyunsuan.png)
+
+与运算就是相同为1, 不同为0, 做位运算
+
+
+3. 如果entry满了又来了一个key，怎么办？
+
+    1. 开放地址法：定位到的桶以及满了，就往下一个桶放，直到遇到一个空的桶放入为止； 
+       当需要查询这个key时，定位的桶中没有对应的key，就继续往下查找，直到没有桶(开放地址法虽然节省内存，但是效率很低)
+        
+    2. 拉链法(普遍使用)：定位到的桶满了就在他后面新增一个新的桶放入； 
+       查找时一路向后查询；
+       
+4. 来看看Go中map的定义：
+```go
+type hmap struct {
+    count     int       // 键值对的数量
+    flags     uint8     // 状态标识，标识map的状态(如正在写、遍历、扩容等)
+    B         uint8     // 桶的数量，bucketcount = 2^B
+    noverflow uint16    // 溢出桶的数量
+    hash0     uint32    // 哈希种子
+    
+    buckets    unsafe.Pointer   // 桶的位置
+    oldbuckets unsafe.Pointer   // 旧桶的位置
+    nevacuate  uintptr       // rehash阶段，迁移的进度(下一个需要迁移的桶的编号)
+    
+    extra *mapextra     // 记录溢出桶的信息
+}
+type bmap struct {    
+    tophash [bucketCnt]uint8    // Tophash是一个unit8的切片，记录的是key的hash值的高八位
+    // bucketCnt作为一个Const定义为8，也就是说一个bmap能存储8个K-V
+    // 因为哈希表中可能存储不同类型的键值对，
+    // 所以键值对占据的内存大小只能再编译中推导(也就是说K-V直接通过内存直接存储起来)
+    // 按照 K1\K2\K3\K4\K5\K6\K7\K8\V1\V2\V3\V4\V5\V6\V7\V8 来存储
+    // 然后还有一个指向 overflow的 bamp指针，溢出桶作为bmap，也就是上面提到的拉链法
+}
+type mapextra struct {
+    overflow    *[]*bmap    // 已经使用的溢出桶，是一个指向 bmap指针切片的指针
+    oldoverflow *[]*bmap    // 扩容时期旧桶的溢出桶
+
+    nextOverflow *bmap      // 下一个空闲溢出桶
+}
+// ok，现在说的可能不太理解，后面在map操作的过程中解释
+// 一个map的大体结构是这样的
+```
+
+一个例子
+
+```go
+m := map[string]string{}
+m["hello"] = "熊鳖"
+// 这时m本质上就是一个hmap指针(通过Sizeof就可以发现大小永远为8)，目前存储了一个K-V对，此时它的参数是这样的
+// count = 1，B=0(2**0==1,也就是一个桶)，buckets指向那个bmap，
+// 此时bmap中的参数为，tophash[0]中存储了hash("hello")的高八位，
+// 后面的16字节为一个指向"hello"编码的指针，再后面16*7个字节为空，再后面16bytes为"粥鳖"的编码指针+len，再后面16*7个字节为空，最后的8btyes overflow=nil
+// 这里kv的string都是 16位的一个指针  指向只读区域的地址
+```
+
+
+扩容规则
+```go
+func overLoadFactor(count int, B uint8) bool {
+    return count > bucketCnt && uintptr(count) > loadFactorNum*(bucketShift(B)/loadFactorDen)
+}
+const loadFactorNum = 13
+// 扩容规则的意思是：如果map中键值对的数量 count> 8，也就是说，至少要能装满一个bmap；
+// 且 count > 13*桶的数量/2，也就是说 count/bucketCount >6.5；两个条件都满足才会允许扩容；
+// 下面看完整的规则
+func hashGrow(t *maptype, h *hmap) {
+    // bigger为需要扩充的数量
+    bigger := uint8(1)
+    // 判断是否满足扩容条件
+    if !overLoadFactor(h.count+1, h.B) {
+        // 不满足bigger为0
+        bigger = 0
+        h.flags |= sameSizeGrow
+    }
+    // oldbuckets和 按照修改后的数组创建 newbuckets
+    oldbuckets := h.buckets
+    newbuckets, nextOverflow := makeBucketArray(t, h.B+bigger, nil)
+    flags := h.flags &^ (iterator | oldIterator)
+    if h.flags&iterator != 0 {
+        flags |= oldIterator
+    }
+    // 修改h的buckets数量，也就是翻倍，例如原来B=2，数量为 1<<2 == 4，1<<(2+1) == 8；
+    // 修改flag，把oldbuckets、newbuckets修改，将rehash进度置为0，将溢出桶的数量置为0
+    h.B += bigger
+    h.flags = flags
+    h.oldbuckets = oldbuckets
+    h.buckets = newbuckets
+    h.nevacuate = 0
+    h.noverflow = 0
+    // 修改 extra字段中的 oldoverflow 和 overflow 
+    if h.extra != nil && h.extra.overflow != nil {
+        // Promote current overflow buckets to the old generation.
+        if h.extra.oldoverflow != nil {
+            throw("oldoverflow is not nil")
+        }
+        h.extra.oldoverflow = h.extra.overflow
+        h.extra.overflow = nil
+    }
+    if nextOverflow != nil {
+        if h.extra == nil {
+            h.extra = new(mapextra)
+        }
+        h.extra.nextOverflow = nextOverflow
+    }
+}
+```
+
+7. ok，现在修改了原来的map，就可以把原来数据中的K-V对迁移到新桶中了；
+   假设newB=4、oldB=3，一个key原来是在3号桶，那么原来与 111(bin(2*3-1))做与运算的结果就是 101，也就是说这个key的低3位就是101，
+   当要迁移到新的Buckets时就只需要看它的第四低位是 0还是1；如果是0就留在 3 号桶，如果是 1就挪到 3+bin(1000)=11号桶；
+
+8. map同样支持删除键的操作，所以在为了防止空间浪费过多，会在操作map的过程中检查noverflow是否过大，如果过大就会迁移，并删除overflow；
+
+```go
+func tooManyOverflowBuckets(noverflow uint16, B uint8) bool {
+    if B > 15 {
+        B = 15
+    }
+    // 如果noverflow大于(1<< min(B&15))则触发缩容
+    return noverflow >= uint16(1)<<(B&15)
+}
+// 具体的迁移
+func evacuate(t *maptype, h *hmap, oldbucket uintptr) {...}
+```
