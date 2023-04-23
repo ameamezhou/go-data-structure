@@ -9,10 +9,12 @@ import (
 func main(){
 	a := make([]byte, 6, 6)
 	b := a[:0]
+	fmt.Println(b, len(b), cap(b))
 	b = append(b, []byte{1, 2, 3}...)
 	fmt.Println(a)
 	fmt.Println(b)
 	c := a[:3]
+	fmt.Println(cap(c))
 	k := make([]byte, 4, 4)
 	sh := (*reflect.SliceHeader)(unsafe.Pointer(&c))
 	fmt.Printf("c: %v \n", c)
