@@ -416,3 +416,34 @@ func tooManyOverflowBuckets(noverflow uint16, B uint8) bool {
 // 具体的迁移
 func evacuate(t *maptype, h *hmap, oldbucket uintptr) {...}
 ```
+
+map 并不是一个线程安全的数据结构。同时读写一个 map 是未定义的行为，如果被检测到，会直接 panic。
+
+上面说的是发生在多个协程同时读写同一个 map 的情况下。 如果在同一个协程内边遍历边删除，并不会检测到同时读写，理论上是可以这样做的。但是，遍历的结果就可能不会是相同的了，有可能结果遍历结果集中包含了删除的 key，也有可能不包含，这取决于删除 key 的时间：是在遍历到 key 所在的 bucket 时刻前或者后。
+
+一般而言，这可以通过读写锁来解决：sync.RWMutex。
+
+读之前调用 RLock() 函数，读完之后调用 RUnlock() 函数解锁；写之前调用 Lock() 函数，写完之后，调用 Unlock() 解锁。
+
+另外，sync.Map 是线程安全的 map，也可以使用。
+
+map 不是线程安全的。
+
+在查找、赋值、遍历、删除的过程中都会检测写标志，一旦发现写标志置位（等于1），则直接 panic。赋值和删除函数在检测完写标志是复位之后，先将写标志位置位，才会进行之后的操作。
+
+sync.map 的结构体
+```go
+type Map struct {
+	mu Mutex
+	read atomic.Value // readOnly
+	dirty map[interface{}]*entry
+	misses int
+}
+```
+mu: 互斥锁，保护 read 和 dirty
+read: 只读数据，指出并发读取 (atomic.Value 类型) 。如果需要更新 read，需要加锁保护数据安全。
+read 实际存储的是 readOnly 结构体，内部是一个原生 map，amended 属性用于标记 read 和 dirty 的数据是否一致
+dirty: 用来读写数据，这是一个线程不安全的原始 map。包含新写入的 key，并且包含 read 中所有未被删除的 key。
+misses: 每次 read 读取失败后，misses 的计数加 1。当达到一定的阈值之后，需要将 dirty 提升为 read，以减少 miss 的情况。
+
+这样通过一个冗余的字段，来支持并发，也算是空间换时间的一种应用吧。
