@@ -447,3 +447,15 @@ dirty: 用来读写数据，这是一个线程不安全的原始 map。包含新
 misses: 每次 read 读取失败后，misses 的计数加 1。当达到一定的阈值之后，需要将 dirty 提升为 read，以减少 miss 的情况。
 
 这样通过一个冗余的字段，来支持并发，也算是空间换时间的一种应用吧。
+
+golang 对map进行并发调用的时候，可以并发读，但是不能并发写
+
+（1）并发读没有问题；
+
+（2）并发读写中的“写”是广义上的，包含写入、更新、删除等操作；
+
+（3）读的时候发现其他 goroutine 在并发写，抛出fatal("concurrent map read and map write")
+
+（4）写的时候发现其他 goroutine 在并发写，抛出fatal("concurrent map writes")
+
+需要关注，此处并发读写会引发 fatal error，是一种比 panic 更严重的错误，无法使用 recover 操作捕获.
